@@ -50,7 +50,7 @@ class Player:
 
     @property
     def avatar_url(self) -> str:
-        return self.__user.avatar_url
+        return self.__user.display_avatar.url
 
     @property
     def isDead(self):

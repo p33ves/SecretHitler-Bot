@@ -76,7 +76,7 @@ class Board:
             colour=colours["AQUA"],
         )
         file_embed = discord.File(images["banner.jpg"], filename="banner.jpg")
-        playersEmbed.set_author(name=user.name, icon_url=user.avatar_url)
+        playersEmbed.set_author(name=user.name, icon_url=user.display_avatar.url)
         playersEmbed.set_image(url="attachment://banner.jpg")
         playersEmbed.set_footer(text="Player limit: 5-10")
         self.__messageToEdit = await channel.send(file=file_embed, embed=playersEmbed)

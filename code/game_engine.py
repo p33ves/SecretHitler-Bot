@@ -1,3 +1,4 @@
+import asyncio
 import json
 import os
 
@@ -219,13 +220,21 @@ class Engine(commands.Cog):
         await ctx.send(embed=help_embed)
 
 
-def main():
-    with open("./auth.json", "r") as _authFile:
-        token = json.load(_authFile)["token"]
-    bot = commands.Bot(command_prefix="sh!")
-    bot.add_cog(Engine(bot))
-    bot.run(token)
+async def main():
+    # message_content and members are privileged intents — enable both in the
+    # Discord Developer Portal (Bot → Privileged Gateway Intents) before running.
+    intents = discord.Intents.default()
+    intents.message_content = True
+    intents.members = True
+
+    bot = commands.Bot(command_prefix="sh!", intents=intents)
+
+    async with bot:
+        await bot.add_cog(Engine(bot))
+        with open("./auth.json", "r") as auth_file:
+            token = json.load(auth_file)["token"]
+        await bot.start(token)
 
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())
