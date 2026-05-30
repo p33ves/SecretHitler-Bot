@@ -1,10 +1,17 @@
 import random
-from collections import namedtuple
+from dataclasses import dataclass
 from enum import Enum
 
 import discord
 
 from static_data import colours, images
+
+
+@dataclass(frozen=True)
+class PartyInfo:
+    name: str
+    image_path: str
+    colour: str
 
 
 class Role(Enum):
@@ -20,11 +27,10 @@ class Role(Enum):
         }
         return rolePics[self.value]
 
-    def getParty(self) -> tuple():
+    def getParty(self) -> PartyInfo:
         if self == Role.Liberal:
-            return (self.name, images["party.png"]["Liberal"], "DARK_BLUE")
-        else:
-            return (Role.Fascist.name, images["party.png"]["Fascist"], "RED")
+            return PartyInfo(self.name, images["party.png"]["Liberal"], "DARK_BLUE")
+        return PartyInfo(Role.Fascist.name, images["party.png"]["Fascist"], "RED")
 
 
 class Player:
@@ -86,12 +92,12 @@ class Player:
         await self.send(file_embed, roleEmbed)
 
     async def revealParty(self, president):
-        partyName, partyPic, colour = self.__role.getParty()
+        party = self.__role.getParty()
         partyEmbed = discord.Embed(
-            title=f"{self.name} is from ***{partyName}*** party",
-            colour=colours[colour],
+            title=f"{self.name} is from ***{party.name}*** party",
+            colour=colours[party.colour],
         )
-        file_embed = discord.File(partyPic, filename="party.png")
+        file_embed = discord.File(party.image_path, filename="party.png")
         partyEmbed.set_author(name=self.name, icon_url=self.avatar_url)
         partyEmbed.set_image(url="attachment://party.png")
         await president.send(file_embed, partyEmbed)

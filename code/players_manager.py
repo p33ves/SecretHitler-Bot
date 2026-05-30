@@ -1,25 +1,29 @@
 import random
-from collections import namedtuple
-from enum import Enum
+from dataclasses import dataclass
+from typing import Optional
 
 import discord
 from discord.ext.commands import Context
 
 from vote_ballot import BallotBox, Vote
 from role_player import Role, Player
-from static_data import colours, images
+
+
+@dataclass(frozen=True)
+class HitlerInfo:
+    id: int
+    name: str
 
 
 class Players:
     def __init__(self):
-        self.__playerList = list()
-        self.__fascists = dict()
-        self.__hitler = None
-        self.__presidentElectIndex = 0
-        self.__prevElectionWin = False
-        self.__chancellorElectID = None
-        self.__prevPresidentID = None
-        self.__prevChancellorID = None
+        self.__playerList: list = []
+        self.__fascists: dict = {}
+        self.__hitler: Optional[HitlerInfo] = None
+        self.__presidentElectIndex: int = 0
+        self.__chancellorElectID: Optional[int] = None
+        self.__prevPresidentID: Optional[int] = None
+        self.__prevChancellorID: Optional[int] = None
         self.__ballotBox = BallotBox()
 
     @property
@@ -31,35 +35,33 @@ class Players:
         return self.__ballotBox
 
     @property
-    def hitler(self) -> namedtuple:
+    def hitler(self) -> Optional[HitlerInfo]:
         return self.__hitler
 
     @property
-    def prevPresidentID(self) -> str:
+    def prevPresidentID(self) -> Optional[int]:
         return self.__prevPresidentID
 
     @property
-    def prevChancellorID(self) -> str:
+    def prevChancellorID(self) -> Optional[int]:
         return self.__prevChancellorID
 
     @property
     def playersAlive(self) -> list:
-        alive = list()
-        for player in self.__playerList:
-            if not player.isDead:
-                alive.append(player)
-        return alive
+        return [p for p in self.__playerList if not p.isDead]
 
     @property
     def president(self) -> Player:
         return self.__playerList[self.__presidentElectIndex]
 
     @property
-    def chancellor(self) -> Player:
-        if self.__chancellorElectID:
-            for player in self.__playerList:
-                if player.id == self.__chancellorElectID:
-                    return player
+    def chancellor(self) -> Optional[Player]:
+        if self.__chancellorElectID is None:
+            return None
+        for player in self.__playerList:
+            if player.id == self.__chancellorElectID:
+                return player
+        return None
 
     def getPlayers(self) -> list:
         return self.__playerList
@@ -68,26 +70,22 @@ class Players:
         self.__ballotBox = BallotBox()
 
     def checkPlayerID(self, id: int) -> bool:
-        for player in self.playersAlive:
-            if id == player.id:
-                return True
-        return False
+        return any(p.id == id for p in self.playersAlive)
 
-    async def generateRoles(self) -> int:
+    async def generateRoles(self) -> None:
         rolesList = ["H", "L", "L", "L", "F", "L", "F", "L", "F", "L"]
         reqdRoles = rolesList[: self.count]
         random.shuffle(self.__playerList)
         random.shuffle(reqdRoles)
-        for index, player in enumerate(self.__playerList):
-            if reqdRoles[index] == "L":
+        for player, role_code in zip(self.__playerList, reqdRoles):
+            if role_code == "L":
                 player.setRole(Role.Liberal)
-            elif reqdRoles[index] == "F":
+            elif role_code == "F":
                 player.setRole(Role.Fascist)
                 self.__fascists[player.id] = player.name
             else:
                 player.setRole(Role.Hitler)
-                hitler = namedtuple("hitler", "id name")
-                self.__hitler = hitler(player.id, player.name)
+                self.__hitler = HitlerInfo(player.id, player.name)
         for player in self.__playerList:
             await player.sendRole(self.count, self.__fascists, self.__hitler)
 
@@ -98,30 +96,31 @@ class Players:
         self.__prevPresidentID = self.president.id
         self.__prevChancellorID = self.chancellor.id
 
-    def nextPresident(self, newIndex=None):
-        if newIndex is None:
-            newIndex = self.__presidentElectIndex + 1
-            while self.__playerList[newIndex].isDead:
-                if newIndex + 1 >= self.count:
-                    newIndex = 0
-                else:
-                    newIndex += 1
-        elif newIndex >= self.count:
-            raise Exception("New president index greater than player count")
-        self.__presidentElectIndex = newIndex
+    def nextPresident(self, newIndex: Optional[int] = None) -> None:
+        if newIndex is not None:
+            if newIndex >= self.count:
+                raise ValueError("New president index exceeds player count")
+            self.__presidentElectIndex = newIndex
+        else:
+            candidate = (self.__presidentElectIndex + 1) % self.count
+            start = candidate
+            while self.__playerList[candidate].isDead:
+                candidate = (candidate + 1) % self.count
+                if candidate == start:
+                    raise ValueError("All players are dead")
+            self.__presidentElectIndex = candidate
         self.__chancellorElectID = None
 
-    async def addPlayer(self, channel: discord.channel, user: discord.User) -> bool:
+    async def addPlayer(self, channel: discord.TextChannel, user: discord.User) -> bool:
         if self.count > 9:
             await channel.send(
                 f"Sorry {user.name}, the current game has reached maximum player limit"
             )
             return False
-        else:
-            self.__playerList.append(Player(user))
-            return True
+        self.__playerList.append(Player(user))
+        return True
 
-    async def beginGame(self, channel: discord.channel, user: discord.User) -> bool:
+    async def beginGame(self, channel: discord.TextChannel, user: discord.User) -> bool:
         if self.count < 5:
             await channel.send(
                 f"Sorry {user.name}, the game requires minimum 5 players"
@@ -139,11 +138,11 @@ class Players:
             or int(arg[3:-1]) == self.president.id
         ):
             await ctx.send(
-                f"Sorry {ctx.author.name}, thats an invalid nomination, please retry!"
+                f"Sorry {ctx.author.name}, that's an invalid nomination, please retry!"
             )
         elif self.count > 6 and int(arg[3:-1]) == self.__prevPresidentID:
             await ctx.send(
-                f"Sorry {ctx.author.name}, thats an invalid nomination, please retry!"
+                f"Sorry {ctx.author.name}, that's an invalid nomination, please retry!"
             )
         else:
             self.__chancellorElectID = int(arg[3:-1])
@@ -155,14 +154,14 @@ class Players:
             await ctx.send(f"Sorry {ctx.author.name}, you cannot vote")
         elif vote.upper() not in ("JA", "NEIN"):
             await ctx.send(
-                f"Sorry {ctx.author.name}, thats an invalid vote, please retry!"
+                f"Sorry {ctx.author.name}, that's an invalid vote, please retry!"
             )
         else:
             self.__ballotBox.vote(ctx.author.id, Vote[vote.upper()])
             return True
         return False
 
-    async def assassinate(self, channel: discord.channel, playerID: int):
+    async def assassinate(self, channel: discord.TextChannel, playerID: int) -> None:
         for player in self.__playerList:
             if player.id == playerID:
                 player.kill()
@@ -171,7 +170,7 @@ class Players:
                 )
                 return
 
-    async def inspect(self, channel: discord.channel, playerID: int):
+    async def inspect(self, channel: discord.TextChannel, playerID: int) -> None:
         for player in self.__playerList:
             if player.id == playerID:
                 await player.revealParty(self.president)
@@ -180,12 +179,9 @@ class Players:
                 )
                 return
 
-    async def chooseSuccessor(self, channel: discord.channel, playerID: int):
-        index = None
-        for ind, player in enumerate(self.getPlayers()):
+    async def chooseSuccessor(self, channel: discord.TextChannel, playerID: int) -> None:
+        for index, player in enumerate(self.__playerList):
             if player.id == playerID:
-                index = ind
-                break
-        if index is None:
-            raise Exception("Next chosen President ID not found ")
-        self.nextPresident(index)
+                self.nextPresident(index)
+                return
+        raise ValueError(f"Chosen president ID {playerID} not found in player list")

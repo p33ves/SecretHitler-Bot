@@ -1,4 +1,5 @@
 from enum import Enum
+from typing import Optional
 
 
 class Vote(Enum):
@@ -8,32 +9,29 @@ class Vote(Enum):
 
 class BallotBox:
     def __init__(self):
-        self.__votedJa = []
-        self.__votedNein = []
+        self.__voted_ja: set = set()
+        self.__voted_nein: set = set()
 
-    def vote(self, playerId, vote: Vote):
-        if not playerId in self.__votedJa and not playerId in self.__votedNein:
-            if vote == Vote.NEIN:
-                self.__votedNein.append(playerId)
-            elif vote == Vote.JA:
-                self.__votedJa.append(playerId)
+    def vote(self, player_id, vote: Vote) -> None:
+        if player_id in self.__voted_ja or player_id in self.__voted_nein:
+            return
+        if vote == Vote.JA:
+            self.__voted_ja.add(player_id)
+        elif vote == Vote.NEIN:
+            self.__voted_nein.add(player_id)
 
     def getTotalVoteCount(self) -> int:
-        return len(self.__votedJa) + len(self.__votedNein)
+        return len(self.__voted_ja) + len(self.__voted_nein)
 
-    def getVoteSplit(self) -> tuple():
-        return len(self.__votedJa), len(self.__votedNein)
+    def getVoteSplit(self) -> tuple:
+        return len(self.__voted_ja), len(self.__voted_nein)
 
     def result(self) -> Vote:
-        if len(self.__votedJa) > len(self.__votedNein):
-            return Vote.JA
-        else:
-            return Vote.NEIN
+        return Vote.JA if len(self.__voted_ja) > len(self.__voted_nein) else Vote.NEIN
 
-    def getVote(self, id):
-        if id in self.__votedJa:
+    def getVote(self, player_id) -> Optional[Vote]:
+        if player_id in self.__voted_ja:
             return Vote.JA
-        elif id in self.__votedNein:
+        if player_id in self.__voted_nein:
             return Vote.NEIN
-        else:
-            return None
+        return None

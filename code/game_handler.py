@@ -1,229 +1,178 @@
+from __future__ import annotations
+
+from typing import Optional
+
 import discord
 from discord.ext.commands import Context
 
-
-from game_state import State
-from game_board import Board, Power
+from game_state import (
+    GameState, GamePhase,
+    InactiveState, NominationState, LegislationState, GameOverState,
+)
+from game_board import Board
 from players_manager import Players
+from board_powers import Power
 
 
 class Game:
-    def __init__(self, channel: discord.channel, user: discord.User):
-        self.__channel = channel
-        self.__owner = user
-        self.__state = None
-        self.__board = Board()
-        self.__players = Players()
-        self.__currentPower = None
-        self.__dangerZone = False
+    """
+    Owns the game context and coordinates between state classes, the board,
+    and the player roster. Command methods delegate entirely to the current
+    GameState, which calls back through the public interface defined here.
+    """
 
-    async def __electionDone(self):
-        self.__board.clearEdit()
-        flag = self.__board.electionResult(self.__channel, self.__players)
-        if flag is None:
-            self.__players.freezePrevious()
-            if self.__dangerZone and await self.__checkWin():
-                self.__state = State.GameOver
-            else:
-                self.__state = State.Legislation
-                await self.__board.showBoard(
-                    self.__channel, self.__state, self.__players, self.__currentPower
-                )
-                await self.__board.policyPile.presidentTurn(
-                    self.__channel, self.__players.president
-                )
-        else:
-            if flag:
-                (
-                    fascistCardCount,
-                    liberalCardCount,
-                ) = await self.__board.placeRandomPolicy(self.__channel)
-                if await self.__checkWin(fascistCardCount, liberalCardCount):
-                    self.__state = State.GameOver
-                    return
-                elif fascistCardCount > 3:
-                    self.__dangerZone = True
-            self.__state = State.Nomination
-            self.__players.nextPresident()
-            await self.__board.showBoard(
-                self.__channel, self.__state, self.__players, self.__currentPower
-            )
+    def __init__(self, channel: discord.TextChannel, user: discord.User):
+        self.channel = channel
+        self._owner = user
+        self._state: GameState = InactiveState()
+        self._board = Board()
+        self._players = Players()
+        self._current_power: Optional[Power] = None
+        self._danger_zone = False
 
-    async def launch(self):
-        self.__state = State.launch(self.__state)
-        await self.__board.openBoard(self.__channel, self.__owner)
+    # ------------------------------------------------------------------ #
+    # Read-only interface consumed by GameState subclasses                 #
+    # ------------------------------------------------------------------ #
+
+    @property
+    def state(self) -> GameState:
+        return self._state
+
+    @property
+    def players(self) -> Players:
+        return self._players
+
+    @property
+    def board(self) -> Board:
+        return self._board
+
+    @property
+    def current_power(self) -> Optional[Power]:
+        return self._current_power
+
+    # ------------------------------------------------------------------ #
+    # Mutation interface consumed by GameState subclasses                  #
+    # ------------------------------------------------------------------ #
+
+    def transition(self, new_state: GameState) -> None:
+        self._state = new_state
+
+    def set_power(self, power: Power) -> None:
+        self._current_power = power
+
+    def clear_power(self) -> None:
+        self._current_power = None
+
+    def enable_danger_zone(self) -> None:
+        self._danger_zone = True
+
+    # ------------------------------------------------------------------ #
+    # Lifecycle commands (called by Engine)                                #
+    # ------------------------------------------------------------------ #
+
+    async def launch(self) -> None:
+        await self._board.openBoard(self.channel, self._owner)
 
     async def join(self, user: discord.User) -> bool:
-        if await self.__state.check(
-            State.Inactive, self.__channel, user
-        ) and await self.__players.addPlayer(self.__channel, user):
-            await self.__board.joinBoard(
-                self.__channel, user.name, self.__players.count
+        if self._state.phase != GamePhase.Inactive:
+            await self.channel.send(
+                f"Sorry {user.name}, that's an invalid command at the moment"
             )
+            return False
+        if await self._players.addPlayer(self.channel, user):
+            await self._board.joinBoard(self.channel, user.name, self._players.count)
             return True
         return False
 
-    async def begin(self, user: discord.User):
-        if user.id != self.__owner.id:
-            await self.__channel.send(
+    async def begin(self, user: discord.User) -> None:
+        if user.id != self._owner.id:
+            await self.channel.send(
                 f"Sorry {user.name}, only the game owner can begin the game"
             )
             return
-        if await self.__players.beginGame(
-            self.__channel, user
-        ) and await self.__board.beginBoard(self.__channel):
-            self.__state = State.Nomination
-            await self.__players.generateRoles()
-            self.__board.setType(self.__players.count)
-            await self.__board.showBoard(
-                self.__channel, self.__state, self.__players, self.__currentPower
+        if (
+            await self._players.beginGame(self.channel, user)
+            and await self._board.beginBoard(self.channel)
+        ):
+            await self._players.generateRoles()
+            self._board.setType(self._players.count)
+            self.transition(NominationState())
+            await self._board.showBoard(
+                self.channel, self._state, self._players, self._current_power
             )
 
-    async def pick(self, ctx: Context, arg: str):
-        if self.__state == State.Election:
-            await ctx.send(
-                f"Sorry {ctx.author.name}, thats an invalid command at the moment"
-            )
-            return
-        elif self.__state == State.Nomination and await self.__players.pickChancellor(
-            ctx, arg
-        ):
-            self.__state = State.Election
-            self.__board.clearEdit()
-        elif self.__state == State.Legislation:
-            flag = await self.__board.pickPolicy(
-                self.__channel, ctx, arg, self.__players
-            )
-            if flag == True:
-                if self.__currentPower == Power.killVeto:
-                    self.__currentPower = None
-            elif flag == False:
+    # ------------------------------------------------------------------ #
+    # In-game commands — fully delegated to the current state              #
+    # ------------------------------------------------------------------ #
+
+    async def pick(self, ctx: Context, arg: str) -> None:
+        await self._state.on_pick(ctx, arg, self)
+
+    async def vote(self, ctx: Context, arg: str) -> None:
+        await self._state.on_vote(ctx, arg, self)
+
+    async def see(self, ctx: Context) -> None:
+        await self._state.on_see(ctx, self)
+
+    async def veto(self, ctx: Context) -> None:
+        await self._state.on_veto(ctx, self)
+
+    # ------------------------------------------------------------------ #
+    # Shared async operations called back from state classes               #
+    # ------------------------------------------------------------------ #
+
+    async def resolve_election(self) -> None:
+        """Process a completed election vote and advance the game state."""
+        self._board.clearEdit()
+        flag = await self._board.electionResult(self.channel, self._players)
+        if flag is None:
+            # Election passed — move to legislation
+            self._players.freezePrevious()
+            if self._danger_zone and await self.check_win():
+                self.transition(GameOverState())
                 return
-            else:
-                self.__board.clearEdit()
-                fascistCardCount, liberalCardCount = self.__board.getCardCount()
-                if await self.__checkWin(fascistCardCount, liberalCardCount):
-                    self.__state = State.GameOver
+            self.transition(LegislationState())
+            await self._board.showBoard(
+                self.channel, self._state, self._players, self._current_power
+            )
+            await self._board.policyPile.presidentTurn(
+                self.channel, self._players.president
+            )
+        else:
+            if flag:
+                # Three consecutive failed elections — place top policy automatically
+                fascist_count, liberal_count = await self._board.placeRandomPolicy(
+                    self.channel
+                )
+                if await self.check_win(fascist_count, liberal_count):
+                    self.transition(GameOverState())
                     return
-                else:
-                    if fascistCardCount > 3:
-                        self.__dangerZone = True
-                    if flag:
-                        self.__currentPower = flag
-                        self.__state = State.Execution
-                    else:
-                        self.__players.nextPresident()
-                        self.__state = State.Nomination
-        elif self.__state == State.Execution:
-            if ctx.author.id != self.__players.president.id:
-                await ctx.send(
-                    f"Sorry {ctx.author.name}, only the President can execute Presidential Powers"
-                )
-                return
-            elif (
-                arg[:3] != "<@!"
-                or not self.__players.checkPlayerID(int(arg[3:-1]))
-                or arg[3:-1] == self.__players.president.id
-            ):
-                await ctx.send(
-                    f"Sorry {ctx.author.name}, that's an invalid selection, please retry!"
-                )
-                return
-            else:
-                candidateID = arg[3:-1]
-                if self.__currentPower in (Power.kill, Power.killVeto):
-                    await self.__players.assassinate(self.__channel, candidateID)
-                    self.__players.nextPresident()
-                elif self.__currentPower == Power.getParty:
-                    await self.__players.inspect(self.__channel, candidateID)
-                    self.__players.nextPresident()
-                elif self.__currentPower == Power.nextPresident:
-                    self.__players.chooseSuccessor(self.__channel, candidateID)
-                else:
-                    raise Exception("Unkown Power")
-                self.__board.clearEdit()
-                self.__state = State.Nomination
-                if self.__currentPower != Power.killVeto:
-                    self.__currentPower = None
-        else:
-            return
-        await self.__board.showBoard(
-            self.__channel, self.__state, self.__players, self.__currentPower
-        )
-
-    async def vote(self, ctx: Context, arg: str):
-        if await self.__state.check(
-            State.Election, ctx.channel, ctx.author
-        ) and await self.__players.markVote(ctx, arg):
-            await self.__board.showBoard(
-                self.__channel, self.__state, self.__players, self.__currentPower
+                if fascist_count > 3:
+                    self.enable_danger_zone()
+            self.transition(NominationState())
+            self._players.nextPresident()
+            await self._board.showBoard(
+                self.channel, self._state, self._players, self._current_power
             )
-            if self.__players.votingComplete():
-                await self.__electionDone()
 
-    async def see(self, ctx: Context):
+    async def check_win(self, fascist_count: int = 0, liberal_count: int = 0) -> bool:
+        """Evaluate all win conditions. Returns True if the game is over."""
         if (
-            self.__state != State.Execution
-            or self.__currentPower != Power.peekTop3
-            or self.__players.president.id != ctx.author.id
+            not (fascist_count or liberal_count)
+            and self._danger_zone
+            and self._players.chancellor is not None
+            and self._players.hitler.id == self._players.chancellor.id
         ):
-            await ctx.send(
-                f"Sorry {ctx.author.name}, this seems to be an invalid command"
-            )
-        else:
-            await self.__board.policyPile.executeTop3(self.__players.president)
-            self.__currentPower = None
-            self.__board.clearEdit()
-            self.__players.nextPresident()
-            self.__state = State.Nomination
-            await self.__channel.send(
-                f"President {ctx.author.name} has peeked the next set of Policies"
-            )
-            await self.__board.showBoard(
-                self.__channel, self.__state, self.__players, self.__currentPower
-            )
-
-    async def veto(self, ctx: Context):
-        if (
-            self.__currentPower != Power.killVeto
-            or self.__players.president.id != ctx.author.id
-            or self.__state != State.Legislation
-        ):
-            await self.__channel.send(
-                f"Sorry {ctx.author.name}, you don't have the power to veto right now!"
-            )
-        else:
-            self.__currentPower = None
-            self.__board.clearEdit()
-            self.__players.nextPresident()
-            self.__state = State.Nomination
-            await self.__board.showBoard(
-                self.__channel, self.__state, self.__players, self.__currentPower
-            )
-
-    async def __checkWin(self, fascistCardCount=0, liberalCardCount=0):
-        if (
-            not (fascistCardCount or liberalCardCount)
-            and self.__dangerZone
-            and self.__players.hitler.id == self.__players.chancellor.id
-        ):
-            await self.__channel.send("Facists win! Hitler has been made Chancellor")
+            await self.channel.send("Fascists win! Hitler has been made Chancellor")
             return True
-        elif fascistCardCount == 6:
-            await self.__channel.send(
-                "Facists win! 6 Fascist policies have been passed"
-            )
+        if fascist_count == 6:
+            await self.channel.send("Fascists win! 6 Fascist policies have been passed")
             return True
-        elif liberalCardCount == 5:
-            await self.__channel.send(
-                "Liberals win! 5 Liberal policies have been passed"
-            )
+        if liberal_count == 5:
+            await self.channel.send("Liberals win! 5 Liberal policies have been passed")
             return True
-        else:
-            for player in self.__players.getPlayers():
-                if player.id == self.__players.hitler.id and player.isDead:
-                    await self.__channel.send(
-                        "Liberals win! Hitler has been assassinated"
-                    )
-                    return True
+        for player in self._players.getPlayers():
+            if player.id == self._players.hitler.id and player.isDead:
+                await self.channel.send("Liberals win! Hitler has been assassinated")
+                return True
         return False

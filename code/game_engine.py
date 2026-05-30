@@ -148,11 +148,7 @@ class Engine(commands.Cog):
         elif await self.__currentGames[ctx.channel.id].join(ctx.author):
             if not ctx.author.dm_channel:
                 await ctx.author.create_dm()
-            self.__currentUsers[ctx.channel.id][
-                ctx.author.id
-            ] = ctx.author.dm_channel.id
-        else:
-            raise Exception("Unexpected Join")
+            self.__currentUsers[ctx.channel.id][ctx.author.id] = ctx.author.dm_channel.id
 
     @commands.command(
         name="begin", description="To start a launched game on the channel"

@@ -4,3 +4,4 @@ images/intermediaries/
 .vscode/
 project_env/
 __pycache__/
+.claude/

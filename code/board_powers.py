@@ -1,4 +1,5 @@
 from enum import Enum
+from typing import Optional
 
 from static_data import images
 
@@ -19,17 +20,13 @@ class BoardType(Enum):
     def getBaseBoard(self) -> str:
         return images["baseboard.png"][self.name]
 
-    def getPowers(self, cardIndex: int) -> Power:
-        powers = {4: Power.kill, 5: Power.killVeto}
-        if self.value == 3:
+    def getPowers(self, cardIndex: int) -> Optional[Power]:
+        powers: dict = {4: Power.kill, 5: Power.killVeto}
+        if self == BoardType.NineToTen:
             powers[1] = Power.getParty
-        if self.value > 1:
-            powers[3] = Power.nextPresident
+        if self != BoardType.FiveToSix:
             powers[2] = Power.getParty
-        elif self.value == 1:
-            powers[3] = Power.peekTop3
+            powers[3] = Power.nextPresident
         else:
-            raise Exception
-        if cardIndex in powers.keys():
-            return powers[cardIndex]
-        return None
+            powers[3] = Power.peekTop3
+        return powers.get(cardIndex)
