@@ -1,7 +1,7 @@
 import pytest
 from unittest.mock import MagicMock, AsyncMock
 
-from game_state import (
+from secret_hitler.game_state import (
     GamePhase,
     GameState,
     InactiveState,

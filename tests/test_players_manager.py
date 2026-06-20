@@ -1,8 +1,8 @@
 import pytest
 from unittest.mock import MagicMock, AsyncMock
 
-from players_manager import Players, HitlerInfo
-from vote_ballot import Vote
+from secret_hitler.players_manager import Players, HitlerInfo
+from secret_hitler.vote_ballot import Vote
 
 
 # ---------------------------------------------------------------------------

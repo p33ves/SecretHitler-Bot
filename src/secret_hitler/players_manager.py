@@ -5,8 +5,8 @@ from typing import Optional
 import discord
 from discord.ext.commands import Context
 
-from vote_ballot import BallotBox, Vote
-from role_player import Role, Player
+from .vote_ballot import BallotBox, Vote
+from .role_player import Role, Player
 
 
 @dataclass(frozen=True)
@@ -69,6 +69,14 @@ class Players:
     def clearBallot(self):
         self.__ballotBox = BallotBox()
 
+    @staticmethod
+    def parse_mention(arg: str) -> Optional[int]:
+        """Parse a Discord user mention (<@ID> or legacy <@!ID>) to an int ID."""
+        if arg.startswith("<@") and arg.endswith(">"):
+            uid = arg[2:-1].lstrip("!")
+            return int(uid) if uid.isdigit() else None
+        return None
+
     def checkPlayerID(self, id: int) -> bool:
         return any(p.id == id for p in self.playersAlive)
 
@@ -117,8 +125,17 @@ class Players:
                 f"Sorry {user.name}, the current game has reached maximum player limit"
             )
             return False
-        self.__playerList.append(Player(user))
+        p = Player(user)
+        p.set_channel(channel)
+        self.__playerList.append(p)
         return True
+
+    def removePlayer(self, user_id: int) -> Optional[str]:
+        for i, player in enumerate(self.__playerList):
+            if player.id == user_id:
+                self.__playerList.pop(i)
+                return player.name
+        return None
 
     async def beginGame(self, channel: discord.TextChannel, user: discord.User) -> bool:
         if self.count < 5:
@@ -131,23 +148,25 @@ class Players:
     async def pickChancellor(self, ctx: Context, arg: str) -> bool:
         if ctx.author.id != self.president.id:
             await ctx.send(f"Sorry {ctx.author.name}, you are not the president!")
-        elif (
-            arg[:3] != "<@!"
-            or not self.checkPlayerID(int(arg[3:-1]))
-            or int(arg[3:-1]) == self.__prevChancellorID
-            or int(arg[3:-1]) == self.president.id
+            return False
+        candidate_id = Players.parse_mention(arg)
+        if (
+            candidate_id is None
+            or not self.checkPlayerID(candidate_id)
+            or candidate_id == self.__prevChancellorID
+            or candidate_id == self.president.id
         ):
             await ctx.send(
                 f"Sorry {ctx.author.name}, that's an invalid nomination, please retry!"
             )
-        elif self.count > 6 and int(arg[3:-1]) == self.__prevPresidentID:
+            return False
+        if self.count > 6 and candidate_id == self.__prevPresidentID:
             await ctx.send(
                 f"Sorry {ctx.author.name}, that's an invalid nomination, please retry!"
             )
-        else:
-            self.__chancellorElectID = int(arg[3:-1])
-            return True
-        return False
+            return False
+        self.__chancellorElectID = candidate_id
+        return True
 
     async def markVote(self, ctx: Context, vote: str) -> bool:
         if not self.checkPlayerID(ctx.author.id):

@@ -1,7 +1,7 @@
 from enum import Enum
 from typing import Optional
 
-from static_data import images
+from .static_data import images
 
 
 class Power(Enum):

@@ -6,31 +6,27 @@ import discord
 from discord.ext import commands
 from discord.ext.commands import Context
 
-from game_handler import Game
-from static_data import colours, images
+from .game_handler import Game
+from .players_manager import Players
+from .static_data import colours, images
 
 
 class Engine(commands.Cog):
     def __init__(self, bot):
-        self.__currentGames = dict()
-        self.__currentUsers = dict()
+        self.__currentGames: dict = {}
+        self.__currentUsers: dict = {}   # channelID -> {userID: dmChannelID}
+        self.__userChannel: dict = {}    # userID -> channelID (reverse index)
         self.__bot = bot
         self.__bot.remove_command("help")
 
     def checkGames(self, channelID: int) -> bool:
-        return channelID in self.__currentGames.keys()
+        return channelID in self.__currentGames
 
     def checkActiveUser(self, userID: int) -> bool:
-        for users in self.__currentUsers.values():
-            if userID in users.keys():
-                return True
-        return False
+        return userID in self.__userChannel
 
     def getGame(self, userID: int) -> int:
-        for channelID, users in self.__currentUsers.items():
-            if userID in users.keys():
-                return channelID
-        return 0
+        return self.__userChannel.get(userID, 0)
 
     async def inGameChannel(self, ctx):
         if not ctx.guild:
@@ -44,30 +40,34 @@ class Engine(commands.Cog):
         return False
 
     async def validSourceChannel(self, ctx) -> bool:
-        validUser = False
-        for channelID, users in self.__currentUsers.items():
-            if (
-                ctx.author.id in users.keys()
-                and channelID in self.__currentGames.keys()
-            ):
-                validUser = True
-                if (
-                    ctx.channel.id == channelID
-                    or ctx.channel.id == users[ctx.author.id]
-                ):
-                    return True
-        if validUser:
-            await ctx.send(
-                f"Sorry {ctx.author.name}, correspondence through this channel is not allowed"
-            )
-        else:
+        channel_id = self.__userChannel.get(ctx.author.id)
+        if channel_id is None or channel_id not in self.__currentGames:
             await ctx.send(f"Sorry {ctx.author.name}, you don't seem to be in a game")
+            return False
+        dm_channel_id = self.__currentUsers[channel_id].get(ctx.author.id)
+        if ctx.channel.id == channel_id or ctx.channel.id == dm_channel_id:
+            return True
+        await ctx.send(
+            f"Sorry {ctx.author.name}, correspondence through this channel is not allowed"
+        )
         return False
+
+    def _do_reset(self, channel_id: int) -> None:
+        game = self.__currentGames.pop(channel_id, None)
+        if game:
+            game.cancel_inactivity_timer()
+        if channel_id in self.__currentUsers:
+            for userID in self.__currentUsers.pop(channel_id):
+                self.__userChannel.pop(userID, None)
+        for template in (images["currentboard.png"], images["newbase.png"]):
+            path = template.replace("<channelID>", str(channel_id))
+            if os.path.exists(path):
+                os.remove(path)
 
     async def closeGame(self, ctx, returnFlag) -> bool:
         if returnFlag:
             await ctx.send("Thanks for playing!")
-            self.reset(ctx)
+            await self.reset(ctx)
 
     # Events:
 
@@ -101,24 +101,7 @@ class Engine(commands.Cog):
 
     @commands.command(name="reset", description="Reset any active game on the channel")
     async def reset(self, ctx):
-        # TODO Allow reset only by owners/ autoreset after a timeout
-        if ctx.channel.id in self.__currentGames.keys():
-            del self.__currentGames[ctx.channel.id]
-        if ctx.channel.id in self.__currentUsers.keys():
-            del self.__currentUsers[ctx.channel.id]
-        if os.path.exists(
-            images["currentboard.png"].replace(
-                "<channelID>", f"{ctx.channel.id}")
-        ):
-            os.remove(
-                images["currentboard.png"].replace(
-                    "<channelID>", f"{ctx.channel.id}")
-            )
-        if os.path.exists(
-            images["newbase.png"].replace("<channelID>", f"{ctx.channel.id}")
-        ):
-            os.remove(images["newbase.png"].replace(
-                "<channelID>", f"{ctx.channel.id}"))
+        self._do_reset(ctx.channel.id)
         await ctx.send(f"Game has been reset on #{ctx.channel.name}")
 
     @commands.command(
@@ -134,9 +117,15 @@ class Engine(commands.Cog):
                 f"Sorry {ctx.author.name}, a game is currently in-progress in this channel"
             )
         else:
-            self.__currentGames[ctx.channel.id] = Game(ctx.channel, ctx.author)
-            self.__currentUsers[ctx.channel.id] = dict()
-            await self.__currentGames[ctx.channel.id].launch()
+            channel_id = ctx.channel.id
+            channel = ctx.channel
+
+            async def on_timeout():
+                self._do_reset(channel_id)
+
+            self.__currentGames[channel_id] = Game(channel, ctx.author, on_timeout)
+            self.__currentUsers[channel_id] = dict()
+            await self.__currentGames[channel_id].launch()
 
     @commands.command(name="join", description="To join a game on the channel")
     async def join(self, ctx: Context):
@@ -150,6 +139,7 @@ class Engine(commands.Cog):
             if not ctx.author.dm_channel:
                 await ctx.author.create_dm()
             self.__currentUsers[ctx.channel.id][ctx.author.id] = ctx.author.dm_channel.id
+            self.__userChannel[ctx.author.id] = ctx.channel.id
 
     @commands.command(
         name="begin", description="To start a launched game on the channel"
@@ -171,7 +161,7 @@ class Engine(commands.Cog):
     async def pick_error(self, ctx: Context, error):
         if isinstance(error, commands.MissingRequiredArgument):
             await ctx.send("Missing required argument to pick")
-        elif len(ctx.args) > 1:
+        elif isinstance(error, commands.TooManyArguments):
             await ctx.send("Thats too many parameters")
 
     @commands.command(
@@ -187,7 +177,7 @@ class Engine(commands.Cog):
     async def vote_error(self, ctx: Context, error):
         if isinstance(error, commands.MissingRequiredArgument):
             await ctx.send("Missing required argument to pick")
-        elif len(ctx.args) > 1:
+        elif isinstance(error, commands.TooManyArguments):
             await ctx.send("Thats too many parameters")
 
     @commands.command(name="see", description="To see the top 3 cards in the draw pile")
@@ -203,6 +193,42 @@ class Engine(commands.Cog):
         if await self.validSourceChannel(ctx) and self.getGame(ctx.author.id):
             gameChannel = self.getGame(ctx.author.id)
             await self.__currentGames[gameChannel].veto(ctx)
+
+    @commands.command(name="status", description="Show the current game phase and state")
+    async def status(self, ctx: Context):
+        if not await self.inGameChannel(ctx):
+            return
+        await self.__currentGames[ctx.channel.id].send_status(ctx.channel)
+
+    @commands.command(name="kick", description="Kick a player from the lobby (owner only, before game starts)")
+    async def kick(self, ctx: Context, arg: str):
+        if not await self.inGameChannel(ctx):
+            return
+        game = self.__currentGames[ctx.channel.id]
+        if ctx.author.id != game.owner.id:
+            await ctx.send(f"Sorry {ctx.author.name}, only the game owner can kick players")
+            return
+        user_id = Players.parse_mention(arg)
+        if user_id is None:
+            await ctx.send("Please mention a valid player, e.g. `sh!kick @user`")
+            return
+        if user_id == ctx.author.id:
+            await ctx.send("You can't kick yourself")
+            return
+        kicked_name = await game.kick(user_id)
+        if kicked_name is None:
+            await ctx.send("That player isn't in the lobby, or the game is already in progress")
+            return
+        self.__currentUsers[ctx.channel.id].pop(user_id, None)
+        self.__userChannel.pop(user_id, None)
+        await ctx.send(f"**{kicked_name}** has been removed from the lobby")
+
+    @kick.error
+    async def kick_error(self, ctx: Context, error):
+        if isinstance(error, commands.MissingRequiredArgument):
+            await ctx.send("Usage: `sh!kick @user`")
+        elif isinstance(error, commands.TooManyArguments):
+            await ctx.send("Too many arguments — usage: `sh!kick @user`")
 
     @commands.command(
         name="help", description="Help command to display all valid commands"

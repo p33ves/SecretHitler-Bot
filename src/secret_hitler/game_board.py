@@ -4,13 +4,13 @@ import discord
 from discord.ext.commands import Context
 from PIL import Image
 
-from vote_ballot import Vote
-from board_powers import BoardType, Power
-from game_state import GameState, GamePhase
-from role_player import Player
-from players_manager import Players
-from policy_pile import Policy, PolicyPile
-from static_data import colours, coordinates, images
+from .vote_ballot import Vote
+from .board_powers import BoardType, Power
+from .game_state import GameState, GamePhase
+from .role_player import Player
+from .players_manager import Players
+from .policy_pile import Policy, PolicyPile
+from .static_data import colours, coordinates, images
 
 
 class Board:
@@ -50,10 +50,6 @@ class Board:
         self.__base = path
         return power
 
-    @property
-    def policyPile(self) -> PolicyPile:
-        return self.__policyPile
-
     def setType(self, numOfPlayers: int) -> None:
         if numOfPlayers < 7:
             self.__type = BoardType.FiveToSix
@@ -68,6 +64,67 @@ class Board:
 
     def getCardCount(self) -> tuple:
         return self.__fascistPolicies, self.__liberalPolicies
+
+    @property
+    def cards_in_deck(self) -> int:
+        return self.__policyPile.noOfCardsInDeck
+
+    @property
+    def cards_in_play_count(self) -> int:
+        return len(self.__policyPile.cardsInPlay)
+
+    # ------------------------------------------------------------------ #
+    # Policy deck interactions (Discord send-side of PolicyPile)          #
+    # ------------------------------------------------------------------ #
+
+    async def presidentTurn(self, channel, president: Player) -> None:
+        shuffled = self.__policyPile.draw()
+        if shuffled:
+            await channel.send(
+                f"The deck has been reshuffled and there are {self.__policyPile.noOfCardsInDeck} cards remaining"
+            )
+        file_embed = discord.File(
+            images["presidentdeck.png"][self.__policyPile.cardsInPlay.count(Policy.Fascist)],
+            filename="policydeck.png",
+        )
+        cardsEmbed = discord.Embed(
+            title="\t **Discard** one Policy",
+            description="Type *sh!p <color/name>* of the card you wish to discard:",
+            colour=colours["DARK_AQUA"],
+        )
+        cardsEmbed.set_image(url="attachment://policydeck.png")
+        await president.send(fileObj=file_embed, embedObj=cardsEmbed)
+
+    async def chancellorTurn(self, chancellor: Player, discarded: Policy) -> None:
+        self.__policyPile.discardPolicy(discarded)
+        file_embed = discord.File(
+            images["chancellordeck.png"][self.__policyPile.cardsInPlay.count(Policy.Fascist)],
+            filename="policydeck.png",
+        )
+        cardsEmbed = discord.Embed(
+            title="\t **Pick** one Policy",
+            description="Type *sh!p <color/name>* of the card you wish to enact:",
+            colour=colours["GOLD"],
+        )
+        cardsEmbed.set_image(url="attachment://policydeck.png")
+        await chancellor.send(fileObj=file_embed, embedObj=cardsEmbed)
+
+    async def executeTop3(self, president: Player) -> None:
+        top3 = self.__policyPile.peekTop3()
+        file_embed = discord.File(
+            images["presidentdeck.png"][top3.count(Policy.Fascist)],
+            filename="policydeck.png",
+        )
+        cardsEmbed = discord.Embed(
+            title="\t Next cards in the draw pile",
+            colour=colours["DARK_AQUA"],
+        )
+        cardsEmbed.set_image(url="attachment://policydeck.png")
+        await president.send(fileObj=file_embed, embedObj=cardsEmbed)
+
+    # ------------------------------------------------------------------ #
+    # Board display                                                        #
+    # ------------------------------------------------------------------ #
 
     async def openBoard(self, channel, user) -> None:
         playersEmbed = discord.Embed(
@@ -110,7 +167,7 @@ class Board:
         phase = state.phase
 
         if phase == GamePhase.Nomination:
-            desc = f"<@!{players.president.id}>, please pick the chancellor by typing *sh!p @<candidate name>*"
+            desc = f"<@{players.president.id}>, please pick the chancellor by typing *sh!p @<candidate name>*"
             col = "PURPLE"
         elif phase == GamePhase.Election:
             desc = "All players, please enter *sh!v ja* → vote **YES** or *sh!v nein* → vote **NO**"
@@ -123,16 +180,16 @@ class Board:
             if power is None:
                 raise ValueError("Execution state requires a current power")
             if power == Power.getParty:
-                desc = f"<@!{players.president.id}>, inspect a player's party by typing *sh!p @<candidate name>*"
+                desc = f"<@{players.president.id}>, inspect a player's party by typing *sh!p @<candidate name>*"
             elif power == Power.nextPresident:
-                desc = f"<@!{players.president.id}>, choose the next President by typing *sh!p @<candidate name>*"
+                desc = f"<@{players.president.id}>, choose the next President by typing *sh!p @<candidate name>*"
             elif power == Power.peekTop3:
-                desc = f"<@!{players.president.id}>, peek the next 3 policies by typing *sh!see*"
+                desc = f"<@{players.president.id}>, peek the next 3 policies by typing *sh!see*"
             elif power == Power.kill:
-                desc = f"<@!{players.president.id}>, assassinate a player by typing *sh!p @<candidate name>*"
+                desc = f"<@{players.president.id}>, assassinate a player by typing *sh!p @<candidate name>*"
             elif power == Power.killVeto:
                 desc = (
-                    f"<@!{players.president.id}>, assassinate a player by typing *sh!p @<candidate name>* "
+                    f"<@{players.president.id}>, assassinate a player by typing *sh!p @<candidate name>* "
                     "or veto the drawn policies with *sh!veto*"
                 )
             else:
@@ -265,7 +322,7 @@ class Board:
             await ctx.send(
                 f"You discarded {chosen.name}. Sending the rest to {players.chancellor.name} now."
             )
-            await self.policyPile.chancellorTurn(players.chancellor, chosen)
+            await self.chancellorTurn(players.chancellor, chosen)
             return True
         if ctx.author.id == players.chancellor.id and len(cards_in_play) == 2:
             await ctx.send(f"You picked {chosen.name}. Enacting it on the board now.")

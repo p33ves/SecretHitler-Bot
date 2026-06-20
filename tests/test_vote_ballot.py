@@ -1,5 +1,5 @@
 import pytest
-from vote_ballot import BallotBox, Vote
+from secret_hitler.vote_ballot import BallotBox, Vote
 
 
 class TestBallotBox:

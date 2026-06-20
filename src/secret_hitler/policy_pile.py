@@ -2,10 +2,7 @@ import random
 from enum import Enum
 from typing import List
 
-import discord
-
-from role_player import Player
-from static_data import images, colours
+from .static_data import images
 
 
 class PolicyError(Exception):
@@ -38,7 +35,7 @@ class PolicyPile:
 
     def __initDrawPile(self):
         self.__drawPile = [Policy.Fascist] * 11 + [Policy.Liberal] * 6
-        self.__shuffle()
+        random.shuffle(self.__drawPile)
 
     def __shuffle(self):
         self.__drawPile.extend(self.__discardPile)
@@ -82,48 +79,3 @@ class PolicyPile:
 
     def placeTopPolicy(self) -> Policy:
         return self.__drawPile.pop(0)
-
-    async def presidentTurn(self, channel, president: Player) -> None:
-        shuffled = self.draw()
-        if shuffled:
-            await channel.send(
-                f"The deck has been reshuffled and there are {self.noOfCardsInDeck} cards remaining"
-            )
-        file_embed = discord.File(
-            images["presidentdeck.png"][self.cardsInPlay.count(Policy.Fascist)],
-            filename="policydeck.png",
-        )
-        cardsEmbed = discord.Embed(
-            title="\t **Discard** one Policy",
-            description="Type *sh!p <color/name>* of the card you wish to discard:",
-            colour=colours["DARK_AQUA"],
-        )
-        cardsEmbed.set_image(url="attachment://policydeck.png")
-        await president.send(fileObj=file_embed, embedObj=cardsEmbed)
-
-    async def chancellorTurn(self, chancellor: Player, discarded: Policy) -> None:
-        self.discardPolicy(discarded)
-        file_embed = discord.File(
-            images["chancellordeck.png"][self.cardsInPlay.count(Policy.Fascist)],
-            filename="policydeck.png",
-        )
-        cardsEmbed = discord.Embed(
-            title="\t **Pick** one Policy",
-            description="Type *sh!p <color/name>* of the card you wish to enact:",
-            colour=colours["GOLD"],
-        )
-        cardsEmbed.set_image(url="attachment://policydeck.png")
-        await chancellor.send(fileObj=file_embed, embedObj=cardsEmbed)
-
-    async def executeTop3(self, president: Player) -> None:
-        top3 = self.peekTop3()
-        file_embed = discord.File(
-            images["presidentdeck.png"][top3.count(Policy.Fascist)],
-            filename="policydeck.png",
-        )
-        cardsEmbed = discord.Embed(
-            title="\t Next cards in the draw pile",
-            colour=colours["DARK_AQUA"],
-        )
-        cardsEmbed.set_image(url="attachment://policydeck.png")
-        await president.send(fileObj=file_embed, embedObj=cardsEmbed)

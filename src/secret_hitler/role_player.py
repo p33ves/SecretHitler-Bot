@@ -1,17 +1,15 @@
+from __future__ import annotations
+
 import random
-from dataclasses import dataclass
 from enum import Enum
+from typing import TYPE_CHECKING, Optional
 
 import discord
 
-from static_data import colours, images
+from .static_data import colours, images
 
-
-@dataclass(frozen=True)
-class PartyInfo:
-    name: str
-    image_path: str
-    colour: str
+if TYPE_CHECKING:
+    from .players_manager import HitlerInfo
 
 
 class Role(Enum):
@@ -20,17 +18,11 @@ class Role(Enum):
     Liberal = 3
 
     def getRolePic(self) -> str:
-        rolePics = {
-            1: images["role.png"]["Hitler"],
-            2: random.choice(images["role.png"]["Fascist"]),
-            3: random.choice(images["role.png"]["Liberal"]),
-        }
-        return rolePics[self.value]
-
-    def getParty(self) -> PartyInfo:
-        if self == Role.Liberal:
-            return PartyInfo(self.name, images["party.png"]["Liberal"], "DARK_BLUE")
-        return PartyInfo(Role.Fascist.name, images["party.png"]["Fascist"], "RED")
+        if self == Role.Hitler:
+            return images["role.png"]["Hitler"]
+        if self == Role.Fascist:
+            return random.choice(images["role.png"]["Fascist"])
+        return random.choice(images["role.png"]["Liberal"])
 
 
 class Player:
@@ -38,6 +30,10 @@ class Player:
         self.__user = user
         self.__role = None
         self.__isDead = False
+        self.__channel = None
+
+    def set_channel(self, channel) -> None:
+        self.__channel = channel
 
     @property
     def id(self) -> str:
@@ -45,7 +41,7 @@ class Player:
 
     @property
     def name(self) -> str:
-        # TODO If same palyer names join the same game, need to change this into full_name
+        # TODO If same player names join the same game, need to change this into full_name
         return self.__user.name
 
     @property
@@ -62,7 +58,7 @@ class Player:
     def setRole(self, role: Role):
         self.__role = role
 
-    async def sendRole(self, count: int, fascists: dict, hitler: namedtuple):
+    async def sendRole(self, count: int, fascists: dict, hitler: Optional[HitlerInfo]) -> None:
         if self.__role == Role.Liberal:
             desc = "For justice, liberty and equality!"
             col = "BLUE"
@@ -85,22 +81,31 @@ class Player:
             colour=colours[col],
             description=desc,
         )
-        file_embed = discord.File(
-            self.__role.getRolePic(), filename="role.png")
+        file_embed = discord.File(self.__role.getRolePic(), filename="role.png")
         roleEmbed.set_author(name=self.name, icon_url=self.avatar_url)
         roleEmbed.set_image(url="attachment://role.png")
         await self.send(file_embed, roleEmbed)
 
-    async def revealParty(self, president):
-        party = self.__role.getParty()
+    async def revealParty(self, president) -> None:
+        if self.__role == Role.Liberal:
+            party_name, img_key, col = "Liberal", "Liberal", "DARK_BLUE"
+        else:
+            party_name, img_key, col = "Fascist", "Fascist", "RED"
         partyEmbed = discord.Embed(
-            title=f"{self.name} is from ***{party.name}*** party",
-            colour=colours[party.colour],
+            title=f"{self.name} is from ***{party_name}*** party",
+            colour=colours[col],
         )
-        file_embed = discord.File(party.image_path, filename="party.png")
+        file_embed = discord.File(images["party.png"][img_key], filename="party.png")
         partyEmbed.set_author(name=self.name, icon_url=self.avatar_url)
         partyEmbed.set_image(url="attachment://party.png")
         await president.send(file_embed, partyEmbed)
 
     async def send(self, fileObj, embedObj):
-        await self.__user.send(file=fileObj, embed=embedObj)
+        try:
+            await self.__user.send(file=fileObj, embed=embedObj)
+        except discord.Forbidden:
+            if self.__channel:
+                await self.__channel.send(
+                    f"⚠️ Could not send a DM to **{self.name}**. "
+                    "Please enable DMs from server members to participate."
+                )

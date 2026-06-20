@@ -1,5 +1,5 @@
 import pytest
-from board_powers import BoardType, Power
+from secret_hitler.board_powers import BoardType, Power
 
 
 class TestBoardTypeFiveToSix:

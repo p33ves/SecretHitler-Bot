@@ -1,5 +1,5 @@
 import pytest
-from policy_pile import Policy, PolicyPile, PolicyError
+from secret_hitler.policy_pile import Policy, PolicyPile, PolicyError
 
 
 class TestPolicyEnum:
